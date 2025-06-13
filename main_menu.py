@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton
 )
 from transaction_window import TransactionWindow
+from ticket_window import TicketWindow  # <-- Import TicketWindow
 
 class MainMenu(QWidget):
     def __init__(self):
@@ -17,7 +18,7 @@ class MainMenu(QWidget):
         self.manual_btn.setFixedHeight(80)
 
         self.touch_btn.clicked.connect(self.open_touch_mode)
-        # self.manual_btn.clicked.connect(self.open_manual_mode)  # Not implemented yet
+        self.manual_btn.clicked.connect(self.open_manual_mode)  # <-- Connect Manual button
 
         layout.addWidget(self.touch_btn)
         layout.addWidget(self.manual_btn)
@@ -28,3 +29,8 @@ class MainMenu(QWidget):
         self.hide()
         self.tx_win = TransactionWindow()
         self.tx_win.show()
+
+    def open_manual_mode(self):
+        self.hide()
+        self.ticket_win = TicketWindow()  # <-- Open TicketWindow
+        self.ticket_win.show()

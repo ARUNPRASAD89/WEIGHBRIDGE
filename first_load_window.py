@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDate, QTime, QTimer
 from PyQt5.QtGui import QFont
 
+
 WHEEL_RATES = {
     "4 wheels": 60,
     "6 wheels": 80,
@@ -97,6 +98,17 @@ class SummaryWindow(QWidget):
                 pass
         SummaryWindow._active_summary = self
 
+        # Dummy widget attributes for printing (replace or set externally as needed)
+        self.ticket_number = QLineEdit("123456")
+        self.date_field = QLineEdit("12/06/2025")
+        self.time_field = QLineEdit("16:08:50")
+        self.vehicle_input = QLineEdit(vehicle_number)
+        self.eamount_input = QLineEdit(amount)
+        self.lamount_input = QLineEdit("")
+        self.load_status_display = QLabel(load_status)
+        self.weight_display = QLabel(weight)
+        self.empty_weight_field = QLineEdit("2000")
+
     def centerOnScreen(self):
         qr = self.frameGeometry()
         cp = QApplication.primaryScreen().availableGeometry().center()
@@ -104,7 +116,71 @@ class SummaryWindow(QWidget):
         self.move(qr.topLeft())
 
     def accept_and_close(self):
+        self.print_bill_direct()
         self.close()
+
+    def print_bill_direct(self):
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName("test_output.pdf")
+        painter = QPainter()
+        if not painter.begin(printer):
+            print("Failed to open printer")
+            return
+
+        font = QFont("Courier New", 12)
+        painter.setFont(font)
+
+        x_left = 80
+        x_right = 450
+        y_start = 120
+        line_gap = 28
+
+        def print_stub(x, ticket_no, date, time, vehicle, rs, materials, gross, tare, net, container, footer):
+            y = y_start
+            painter.drawText(x, y, f"No.: {ticket_no}")
+            y += line_gap
+            painter.drawText(x, y, f"Date: {date}")
+            y += line_gap
+            painter.drawText(x, y, f"Time: {time}")
+            y += line_gap
+            painter.drawText(x, y, f"Vehicle No.: {vehicle}")
+            y += line_gap
+            painter.drawText(x, y, f"Rs.: {rs}")
+            y += line_gap
+            painter.drawText(x, y, f"Materials: {materials}")
+            y += line_gap
+            painter.drawText(x, y, f"Gross Wt.: {gross}")
+            y += line_gap
+            painter.drawText(x, y, f"Tare Wt.: {tare}")
+            y += line_gap
+            painter.drawText(x, y, f"Net Wt.: {net}")
+            y += line_gap
+            painter.drawText(x, y, f"Container No.: {container}")
+            y += line_gap * 2
+            painter.drawText(x, y, footer)
+
+        ticket_no = self.ticket_number.text()
+        date = self.date_field.text()
+        time = self.time_field.text()
+        vehicle = self.vehicle_input.text()
+        rs = self.eamount_input.text() or self.lamount_input.text()
+        materials = self.load_status_display.text()
+        gross = self.weight_display.text()
+        tare = self.empty_weight_field.text()
+        try:
+            net = str(float(gross) - float(tare)) if gross and tare else "0"
+        except Exception:
+            net = "0"
+        container = "-"
+        footer = "EMPTY" if materials.strip().upper() == "LOAD" else materials
+
+        print_stub(x_left, ticket_no, date, time, vehicle, rs, materials, gross, tare, net, container, footer)
+        print_stub(x_right, ticket_no, date, time, vehicle, rs, materials, gross, tare, net, container, footer)
+
+        painter.end()
+
+
 
 class FirstLoadWindow(QWidget):
     def __init__(self, mode_window=None):
