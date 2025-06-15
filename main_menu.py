@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton
 )
-# from transaction_window import TransactionWindow  # keep as-is if needed
+from transaction_window import TransactionWindow  # keep as-is if needed
 from main_menu_form import MainMenuForm  # <-- Change: import MainMenuForm
 
 class MainMenu(QWidget):
