@@ -1,0 +1,83 @@
+PATCH ON BASE TRANSACTION
+def open_single_transaction(self):
+    from single_transaction_window import SingleTransactionWindow
+    self.next_window = SingleTransactionWindow(parent=self)
+    self.next_window.show()
+    self.hide()
+
+def open_first_transaction(self):
+    from first_transaction_window import FirstTransactionWindow
+    self.next_window = FirstTransactionWindow(parent=self)
+    self.next_window.show()
+    self.hide()
+
+def open_second_transaction(self):
+    from second_transaction_window import SecondTransactionWindow
+    self.next_window = SecondTransactionWindow(parent=self)
+    self.next_window.show()
+    self.hide()
+PATCHES ON FIRST,SECOND AND SINGLE
+class SingleTransactionWindow(BaseTransactionWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # ...
+class FirstTransactionWindow(BaseTransactionWindow):
+    def __init__(self, parent=None, transaction_window=None):
+        super().__init__(parent)
+        self.transaction_window = transaction_window
+        # ...
+class SecondTransactionWindow(BaseTransactionWindow):
+    def __init__(self, parent=None, pending_ticket_number=None):
+        super().__init__(parent)
+        # ...
+Key change:
+
+Python
+self.ticket_win = BaseTransactionWindow(parent=self)
+
+How to Fix
+You need to:
+
+Pass the correct parent when creating each window (so that the parent chain is always correct).
+Always show the parent on Exit, instead of opening a new BaseTransactionWindow.
+Step 1: Pass parent when opening child windows
+In MainMenuForm:
+
+Python
+self.ticket_win = BaseTransactionWindow(parent=self)
+In BaseTransactionWindow (when opening Single/First/Second Transaction):
+
+Python
+def open_single_transaction(self):
+    from single_transaction_window import SingleTransactionWindow
+    self.next_window = SingleTransactionWindow(parent=self)
+    self.next_window.show()
+    self.hide()
+Repeat for open_first_transaction and open_second_transaction, passing parent=self and using self.hide() instead of self.close().
+Do not call self.close() when opening a child, only hide.
+
+Step 2: Transaction windows return to parent, not create new
+In SingleTransactionWindow, FirstTransactionWindow, and SecondTransactionWindow, on Exit:
+
+Python
+def return_to_base_transaction_window(self):
+    parent = self.parent()
+    if parent:
+        parent.show()
+    self.close()
+You do not create a new instance of BaseTransactionWindow, you just show the parent.
+
+Step 3: Main Exit in BaseTransactionWindow returns to MainMenuForm
+In BaseTransactionWindow:
+
+Python
+def return_to_main_menu(self):
+    parent = self.parent()
+    if parent:
+        parent.show()
+    self.close()
+In summary:
+Always pass the parent when opening any window.
+When opening a transaction window from BaseTransactionWindow, use parent=self and self.hide().
+When exiting from a transaction window, show the parent and close self.
+When exiting from BaseTransactionWindow, show the parent MainMenuForm and close self.

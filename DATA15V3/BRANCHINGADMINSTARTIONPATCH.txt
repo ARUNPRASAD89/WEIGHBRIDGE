@@ -1,0 +1,8 @@
+Summary Table
+________________________________________________________________________________________________
+Parent Type|Child Type |Parent Hidden?	|Child Shows?	|Notes					|				
+________________________________________________________________________________________________
+QDialog		QWidget		Yes	 ❌		 Child may not show/focus		|
+QDialog		QDialog		Yes/No	 ✅		 Best for modal/sub-modal		|
+QWidget		QWidget		Yes	 ✅		 Works fine, both behave as windows	|
+QWidget		QDialog		Yes/No	 ✅		 Works fine				|
