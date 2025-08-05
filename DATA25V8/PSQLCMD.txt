@@ -1,0 +1,1 @@
+pg_dump -U postgres -h localhost -d weighbridgeold -F c -b -v -f "D:\DATA25V8\weighbridgeold.sql"
