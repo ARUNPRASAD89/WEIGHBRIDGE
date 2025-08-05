@@ -1,0 +1,14 @@
+def update_net_weight(self):
+    try:
+        loaded = int(self.loaded_weight.text()) if self.loaded_weight.text() else 0
+        tare = int(self.empty_weight.text()) if self.empty_weight.text() else 0
+        net = loaded - tare
+        if loaded and tare:
+            if net < 0:
+                self.net_weight.setText("0")
+            else:
+                self.net_weight.setText(str(net))
+        else:
+            self.net_weight.setText("")
+    except ValueError:
+        self.net_weight.setText("")

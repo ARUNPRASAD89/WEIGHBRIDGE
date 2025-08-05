@@ -1,0 +1,56 @@
+[User opens SecondLoadWindow]
+      |
+      v
+[User enters Ticket No or Vehicle No]
+      |
+      v
+[User presses OK button]
+      |
+      v
+[SecondLoadWindow.ok_pressed()]
+      |
+      v
+[Fetch ticket data from DB by ticket/vehicle]
+      |
+      v
+[If found:]
+      |
+      v
+[Fill all fields in SecondLoadWindow with DB data + new weight]
+      |
+      v
+[Prepare summary_data dict]
+      |
+      v
+[Show SummaryDialog (fields prefilled)]
+      |
+      v
++-----------------------------+
+|   SummaryDialog             |
+|  [WeighPrint]   [Cancel]    |
++-----------------------------+
+      |
+      +--[Cancel]--> (Dialog closes, returns to SecondLoadWindow)
+      |
+      +--[WeighPrint]
+            |
+            v
+    [SummaryDialog.on_weighprint()]
+            |
+            v
+    [UPDATE tickets SET LoadedWeight, NetWeight, EAMOUNT, LAMOUNT, TAMOUNT, Pending=FALSE, Closed=TRUE WHERE TicketNumber=...]
+            |
+            v
+    [If success:]
+            |
+            v
+    [Show "Saved" message]
+            |
+            v
+    [Close SummaryDialog]
+            |
+            v
+    [Close SecondLoadWindow]
+            |
+            v
+    [Show transaction_window (main menu/landing)]

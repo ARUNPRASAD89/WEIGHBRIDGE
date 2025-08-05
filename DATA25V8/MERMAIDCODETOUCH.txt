@@ -1,0 +1,15 @@
+```mermaid
+flowchart TD
+    main["main.py"]
+    login["login_window.py"]
+    menu["main_menu.py"]
+    transaction["transaction_window.py"]
+    firstload["first_load_window.py"]
+    secondload["second_load_window.py"]
+
+    main --> login
+    login --> menu
+    menu --> transaction
+    transaction --> firstload
+    transaction --> secondload
+```
