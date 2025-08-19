@@ -39,30 +39,32 @@ def execute_query(query, params=None, fetch_lastrowid=False):
             conn.commit()
             return [dict(row) for row in result]
         if fetch_lastrowid:
-            last_id = cur.fetchone()[0]
+            last_id = cur.fetchone()
             conn.commit()
             return last_id
         conn.commit()
         return None
 
 def get_user_permissions(username):
+    """
+    Fetches user permissions based on the simplified 'is_admin' flag.
+    """
     conn = psycopg2.connect(**DB_CONFIG)
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=extras.DictCursor)
+    # --- This queries the new 'is_admin' column ---
     cur.execute("""
-        SELECT offlinetickets, deleterecords, duplicateticket, vehiclemaster, adminuser, primaryuser
+        SELECT username, is_admin
         FROM usermanagement
         WHERE username = %s
     """, (username,))
-    row = cur.fetchone()
+    user_data = cur.fetchone()
     conn.close()
-    if row:
+
+    if user_data:
+        # Returns a simple dictionary with the admin status.
         return {
-            'offlinetickets': row[0],
-            'deleterecords': row[1],
-            'duplicateticket': row[2],
-            'vehiclemaster': row[3],
-            'adminuser': row[4],
-            'primaryuser': row[5]
+            'username': user_data['username'],
+            'is_admin': user_data['is_admin']
         }
     return None
 

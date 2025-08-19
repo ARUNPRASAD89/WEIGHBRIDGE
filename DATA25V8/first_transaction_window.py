@@ -49,13 +49,17 @@ class FirstTransactionWindow(BaseTransactionWindow):
         self.date = now.date().toString("yyyy-MM-dd")
         self.time = now.time().toString("HH:mm:ss")
 
-        self.weight_display.setText(str(random.randint(5000, 50000)))
-
         # Storage for true weigh event times
         self._empty_weight_date = ""
         self._empty_weight_time = ""
         self._load_weight_date = ""
         self._load_weight_time = ""
+
+        # Flow control flags
+        self._pending_checked = False            # Ask pending verification at start only
+        self._suppress_pending_check = False     # Suppress during printing/cleanup
+        self._print_prompt_open = False          # Avoid multiple print prompts
+        self._printing_in_progress = False       # Avoid multiple print windows
 
         # --- Patch: Ensure LoadStatus dropdown exists ---
         if not self.mandatory_widgets.get("LoadStatus"):
@@ -70,19 +74,41 @@ class FirstTransactionWindow(BaseTransactionWindow):
             self.mandatory_widgets.get("LoadStatus").addItems(["LOAD", "EMPTY"])
             self.mandatory_widgets.get("LoadStatus").setCurrentText("LOAD")
 
-        self.btn_weigh.clicked.connect(self.handle_weigh)
+        # Ensure single connection for Save and Weigh
+        try:
+            self.btn_save.clicked.disconnect()
+        except Exception:
+            pass
         self.btn_save.clicked.connect(self.check_pending_and_save)
 
+        try:
+            self.btn_weigh.clicked.disconnect()
+        except Exception:
+            pass
+        self.btn_weigh.clicked.connect(self.handle_weigh)
+
         if self.vehicle_number:
+            try:
+                self.vehicle_number.editingFinished.disconnect()
+            except Exception:
+                pass
             self.vehicle_number.editingFinished.connect(self.check_pending_on_vehicle_entry)
-        self._pending_checked = False
 
         # Add or connect to existing Search button
         if not hasattr(self, "btn_search"):
             self.btn_search = QPushButton("Search")
             self.mand_grid.addWidget(self.btn_search, 12, 1)
+        try:
+            self.btn_search.clicked.disconnect()
+        except Exception:
+            pass
         self.btn_search.clicked.connect(self.search_action)
-        self.btn_exit.clicked.disconnect()
+
+        # Exit
+        try:
+            self.btn_exit.clicked.disconnect()
+        except Exception:
+            pass
         self.btn_exit.clicked.connect(self.return_to_base_transaction_window)
 
         if hasattr(self, "btn_close_tran"):
@@ -154,8 +180,8 @@ class FirstTransactionWindow(BaseTransactionWindow):
         logic_time = now.time().toString("HH:mm")
         print("[handle_weigh] called (first transaction)")
         try:
-            value = int(self.weight_display.text())
-        except Exception:
+            value = int(float(self.weight_display.text()))
+        except (ValueError, TypeError):
             print("[handle_weigh] Error parsing weight_display.text()")
             value = 0
         load_status = self.load_status.currentText().strip().upper() if self.load_status else ""
@@ -196,6 +222,8 @@ class FirstTransactionWindow(BaseTransactionWindow):
                 self.net_weight.setText("")
 
     def check_pending_on_vehicle_entry(self):
+        if self._suppress_pending_check or self._pending_checked:
+            return
         veh_number = self.vehicle_number.text().strip() if self.vehicle_number else ""
         if not veh_number:
             return
@@ -203,6 +231,7 @@ class FirstTransactionWindow(BaseTransactionWindow):
         pending_row = fetch_one(
             'SELECT "TicketNumber" FROM tickets WHERE "VehicleNumber" = %s AND "Pending" = TRUE', (veh_number,)
         )
+        self._pending_checked = True  # Ask only once per form session
         if pending_row:
             msg = QMessageBox(self)
             msg.setWindowTitle("Pending Transaction")
@@ -249,24 +278,7 @@ class FirstTransactionWindow(BaseTransactionWindow):
             dlg.exec_()
 
     def check_pending_and_save(self):
-        veh_number = self.vehicle_number.text().strip() if self.vehicle_number else ""
-        pending_row = fetch_one(
-            'SELECT "TicketNumber" FROM tickets WHERE "VehicleNumber" = %s AND "Pending" = TRUE', (veh_number,)
-        )
-        if pending_row:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Pending Transaction")
-            msg.setText("Pending transaction found for this vehicle. Do you want to continue to Second Transaction?")
-            msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-            ret = msg.exec_()
-            if ret == QMessageBox.Ok:
-                from second_transaction_window import SecondTransactionWindow
-                self.close()
-                self.second_tran_win = SecondTransactionWindow(pending_ticket_number=pending_row["TicketNumber"])
-                self.second_tran_win.show()
-                return
-            else:
-                return
+        # Ask pending verification at start only (on vehicle entry). Do not re-ask on Save.
         self.save_ticket()
 
     def save_ticket(self):
@@ -349,17 +361,62 @@ class FirstTransactionWindow(BaseTransactionWindow):
         msg.setWindowTitle("Success")
         msg.setText(f"Ticket number {ticket_number} successfully saved")
         msg.setStandardButtons(QMessageBox.Ok)
-        msg.buttonClicked.connect(lambda _: self.ask_print_prompt(ticket_data))
-        msg.exec_()
+        ret = msg.exec_()
+        if ret == QMessageBox.Ok:
+            self.ask_print_prompt(ticket_data)
 
     def ask_print_prompt(self, ticket_data):
-        dlg = PrintPromptDialog(ticket_data, parent=self)
-        result = dlg.exec_()
-        if result == QDialog.Accepted:
-            print_ticket_with_template(ticket_data)
-            self.return_to_base_transaction_window()
-        else:
-            self.return_to_base_transaction_window
+        if self._print_prompt_open:
+            return
+        self._print_prompt_open = True
+        try:
+            dlg = PrintPromptDialog(ticket_data, parent=self)
+            result = dlg.exec_()
+            if result == QDialog.Accepted:
+                # Avoid any re-entrant checks or duplicate print windows
+                if not self._printing_in_progress:
+                    self._suppress_pending_check = True
+                    self._printing_in_progress = True
+                    try:
+                        print_ticket_with_template(ticket_data)
+                    finally:
+                        self._printing_in_progress = False
+                        self._suppress_pending_check = False
+                # Clear fields and return to base
+                self.clear_all_fields()
+                self.return_to_base_transaction_window()
+            else:
+                # User chose not to print; clear and return
+                self.clear_all_fields()
+                self.return_to_base_transaction_window()
+        finally:
+            self._print_prompt_open = False
+
+    def clear_all_fields(self):
+        # Clear everything according to weighbridge end-of-transaction logic
+        try:
+            self.clear_non_essential_fields(essentials=())
+        except Exception:
+            pass
+        # Explicitly clear ticket number and set combos to default index 0
+        if self.ticket_number:
+            self.ticket_number.clear()
+        if self.load_status:
+            try:
+                self.load_status.setCurrentIndex(0)
+            except Exception:
+                pass
+        # Reset weight display and internal timestamps/flags
+        try:
+            self.weight_display.setText("0")
+        except Exception:
+            pass
+        self._empty_weight_date = ""
+        self._empty_weight_time = ""
+        self._load_weight_date = ""
+        self._load_weight_time = ""
+        self._pending_checked = False
+
     def search_action(self):
         tickets = fetch_all(
             '''

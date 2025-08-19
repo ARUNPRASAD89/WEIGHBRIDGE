@@ -7,11 +7,6 @@ from print_ticket_with_template_win32 import print_ticket_with_template
 from date_time_utils import to_display_date, to_display_time
 
 
-
-
-
-
-
 class PrintPromptDialog(QDialog):
     def __init__(self, ticket_data, parent=None):
         super().__init__(parent)
@@ -35,9 +30,6 @@ class SingleTransactionWindow(BaseTransactionWindow):
     def __init__(self, parent=None):
         print("Initializing SingleTransactionWindow")
         super().__init__(parent)
-        rand_weight = random.randint(5000, 50000)
-        print(f"Random weight for display: {rand_weight}")
-        self.weight_display.setText(str(rand_weight))
         self.lbl_title.setText("Vehicle Single Transaction")
 
         # Date and Time fields (show + set to current on load, read-only)
@@ -193,8 +185,8 @@ class SingleTransactionWindow(BaseTransactionWindow):
         logic_date = now.date().toString("dd/MM/yyyy")
         logic_time = now.time().toString("HH:mm")
         try:
-            value = int(self.weight_display.text())
-        except Exception:
+            value = int(float(self.weight_display.text()))
+        except (ValueError, TypeError):
             print("[handle_weigh] Error parsing weight_display.text()")
             value = 0
         load_status = self.load_status.currentText().strip().upper() if self.load_status else ""

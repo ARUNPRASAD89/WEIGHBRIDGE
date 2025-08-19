@@ -10,13 +10,13 @@ from db_utils import fetch_all, fetch_one
 from date_time_utils import to_db_date, to_display_date, to_display_time
 from reportpreview import ReportPreviewDialog
 
-# Helper: Get dynamic fields for each report type from DB (Unchanged)
 def get_fields_for_report(report_type, extra_params=None):
     fields = []
     template_row = fetch_one("SELECT reporttemplatename FROM reporttemplate WHERE lower(reporttemplatename) = %s", (report_type.lower(),))
     if template_row:
         template_name = template_row["reporttemplatename"]
-        detail_rows = fetch_all("SELECT fieldname FROM reportdetail WHERE reporttemplatename = %s", (template_name,))
+        # --- FIX: Ensure consistent column order ---
+        detail_rows = fetch_all("SELECT fieldname FROM reportdetail WHERE reporttemplatename = %s ORDER BY id", (template_name,))
         fields = [dr["fieldname"] for dr in detail_rows]
     if not fields:
         if report_type == "Ticket":
@@ -36,22 +36,15 @@ def get_fields_for_report(report_type, extra_params=None):
     return fields
 
 def generate_summary_row(rows, fields):
-    """
-    Generates a summary row for the report with custom aggregation logic.
-    """
     if not rows:
         return None
-
     summary = {field: "" for field in fields}
-    
     if "TicketNumber" in fields:
         summary["TicketNumber"] = f"COUNT: {len(rows)}"
-
     fields_to_sum = [
         "EmptyWeight", "LoadedWeight", "NetWeight", 
         "EAMOUNT", "LAMOUNT", "TAMOUNT", "AMOUNT"
     ]
-
     for field in fields_to_sum:
         if field in fields:
             total = 0
@@ -62,7 +55,6 @@ def generate_summary_row(rows, fields):
                 except (ValueError, TypeError):
                     continue
             summary[field] = str(total)
-            
     return summary
 
 class ReportWindowForm(QDialog):
@@ -70,18 +62,14 @@ class ReportWindowForm(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Advanced Report Builder")
         self.setMinimumSize(1000, 700)
-
         self.filters = []
         self.last_query = ""
         self.last_params = []
         self.current_report_type = "Ticket"
         self.extra_params = []
-
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(6)
-
-        # UI Setup (Unchanged)
         top_grid = QGridLayout()
         top_grid.setSpacing(10)
         reports_on_box = QGroupBox("1. Report On")
@@ -144,8 +132,6 @@ class ReportWindowForm(QDialog):
         self.exit_btn = QPushButton("Exit")
         bottom_layout.addWidget(self.without_lines_chk); bottom_layout.addWidget(self.exit_btn)
         main_layout.addLayout(bottom_layout)
-
-        # Signals (Unchanged)
         self.material_radio.toggled.connect(self.on_report_type_changed)
         self.supplier_radio.toggled.connect(self.on_report_type_changed)
         self.ticket_radio.toggled.connect(self.on_report_type_changed)
@@ -158,11 +144,9 @@ class ReportWindowForm(QDialog):
         self.exit_btn.clicked.connect(self.close)
         self.add_extra_field_btn.clicked.connect(self.add_extra_param)
         self.selection_combo.currentTextChanged.connect(self.on_field_changed)
-        
         self.on_report_type_changed()
 
     def add_filter(self, connector):
-        # This function is unchanged
         field = self.selection_combo.currentText()
         if not field:
             QMessageBox.warning(self, "No Field", "Please select a field to filter by.")
@@ -192,7 +176,6 @@ class ReportWindowForm(QDialog):
         self.update_filter_list_widget()
 
     def update_filter_list_widget(self):
-        # This function is unchanged
         self.filter_list_widget.clear()
         for f in self.filters:
             if f['operator'] == 'BETWEEN':
@@ -202,14 +185,12 @@ class ReportWindowForm(QDialog):
             self.filter_list_widget.addItem(text.strip())
 
     def clear_filters(self):
-        # This function is unchanged
         self.filters.clear()
         self.filter_list_widget.clear()
         self.last_query = ""
         self.last_params = []
 
     def build_query(self):
-        # This function is unchanged
         if self.current_report_type == "Ticket": table = "tickets"
         elif self.current_report_type == "Material": table = "material"
         elif self.current_report_type == "Supplier": table = "suppliers"
@@ -238,7 +219,6 @@ class ReportWindowForm(QDialog):
         QMessageBox.information(self, "Query Built Successfully", "The following query has been prepared:\n\n" + self.last_query)
 
     def display_data(self):
-        # This function is unchanged
         self.build_query()
         if not self.last_query:
             QMessageBox.warning(self, "No Query", "Please build a query first.")
@@ -271,7 +251,6 @@ class ReportWindowForm(QDialog):
             QMessageBox.critical(self, "Database Error", f"Failed to fetch data.\nError: {e}\nQuery: {self.last_query}")
 
     def on_field_changed(self, field_name):
-        # This function is unchanged
         is_date_field = 'date' in field_name.lower()
         self.date_range_radio.setEnabled(is_date_field)
         self.from_date_edit.setEnabled(is_date_field)
@@ -280,7 +259,6 @@ class ReportWindowForm(QDialog):
             self.value_radio.setChecked(True)
 
     def add_extra_param(self):
-        # This function is unchanged
         param = self.extra_field_input.text().strip()
         if param and param not in self.extra_params:
             self.extra_params.append(param)
@@ -288,7 +266,6 @@ class ReportWindowForm(QDialog):
             self.extra_field_input.clear()
 
     def on_report_type_changed(self):
-        # This function is unchanged
         if self.material_radio.isChecked(): self.current_report_type = "Material"
         elif self.supplier_radio.isChecked(): self.current_report_type = "Supplier"
         else: self.current_report_type = "Ticket"
@@ -306,37 +283,44 @@ class ReportWindowForm(QDialog):
         if not self.last_query:
             QMessageBox.warning(self, "No Query", "Please build a query before printing.")
             return
-
-        template_row = fetch_one('SELECT reporttemplatename FROM reporttemplate WHERE "Default" = %s', (True,))
+        
+        template_row = fetch_one('SELECT * FROM reporttemplate WHERE "Default" = %s', (True,))
         if not template_row:
             QMessageBox.warning(self, "No template", "No default template found.")
             return
-
         template_name = template_row["reporttemplatename"]
-        detail_rows = fetch_all("SELECT fieldname, fieldcaption FROM reportdetail WHERE reporttemplatename = %s", (template_name,))
+        
+        detail_rows = fetch_all("SELECT * FROM reportdetail WHERE reporttemplatename = %s ORDER BY id", (template_name,))
         col_fields = [dr["fieldname"] for dr in detail_rows]
         col_captions = [dr["fieldcaption"] for dr in detail_rows]
+        field_layout = [dict(dr) for dr in detail_rows]
 
         for param in self.extra_params:
             if param not in col_fields:
-                col_fields.append(param); col_captions.append(param)
+                col_fields.append(param)
+                col_captions.append(param)
+                # Add a default layout for the extra parameter
+                field_layout.append({'fieldname': param, 'width': 40, 'alignment': 'LEFT'})
         
         try:
             data_rows = fetch_all(self.last_query, tuple(self.last_params))
-            
-            # Generate the summary row
             summary_row = generate_summary_row(data_rows, col_fields)
-            
-            # --- MODIFICATION: Append the summary to the data list and remove the keyword argument ---
-            if summary_row:
-                data_rows.append(summary_row)
             
             preview = ReportPreviewDialog(
                 title=template_name, 
                 col_captions=col_captions, 
                 rows=data_rows, 
-                col_fields=col_fields, 
-                # summary_data argument is removed to prevent the error
+                col_fields=col_fields,
+                field_layout=field_layout,
+                summary_data=summary_row,
+                header_font_size=template_row.get('headerfontsize', 10),
+                detail_font_size=template_row.get('detailfontsize', 8),
+                line_height_mm=float(template_row.get('lineheight', 7.0)),
+                header_font_name=template_row.get('headerfontname', 'Arial'),
+                detail_font_name=template_row.get('detailfontname', 'Arial'),
+                page_width_mm=float(template_row.get('pagewidth', 210.0)),
+                top_margin_mm=float(template_row.get('topmargin', 10.0)),
+                left_margin_mm=float(template_row.get('leftmargin', 10.0)),
                 parent=self
             )
             preview.exec_()
@@ -350,3 +334,14 @@ class ReportWindowForm(QDialog):
                 QMessageBox.critical(self, "Database Internal Error", f"An unexpected internal database error occurred.\nError: {e}")
         except Exception as e:
             QMessageBox.critical(self, "Database Error", f"Failed to fetch data for printing.\nError: {e}\nQuery: {self.last_query}")
+
+    def closeEvent(self, event):
+        """
+        Ensure parent (if any) is re-shown when this dialog closes.
+        """
+        parent = self.parent()
+        if parent is not None:
+            parent.show()
+            parent.raise_()
+            parent.activateWindow()
+        super().closeEvent(event)

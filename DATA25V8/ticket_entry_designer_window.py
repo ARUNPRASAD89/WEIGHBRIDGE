@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QPainter, QPixmap
 from PyQt5.QtCore import Qt, QRect, QPoint
+
 from db_utils import execute_query, fetch_one
 from ticket_printer import render_ticket_with_data
 
@@ -15,6 +16,23 @@ def mm_to_px(mm):
 
 def px_to_mm(px):
     return px / MM_TO_PX
+
+def safe_point_size(qfont: QFont):
+    """Return a sane integer point size for a QFont, with fallbacks."""
+    ps = qfont.pointSize()
+    if ps and ps > 0:
+        return int(ps)
+    try:
+        pfs = qfont.pointSizeF()
+        if pfs and pfs > 0.0:
+            return int(round(pfs))
+    except Exception:
+        pass
+    # fallback to application default point size
+    app = QApplication.instance()
+    if app:
+        return int(app.font().pointSize())
+    return 10
 
 def get_ticket_columns():
     rows = execute_query("""
@@ -27,24 +45,63 @@ def get_ticket_columns():
 
 def get_all_template_names():
     rows = execute_query("SELECT templatename FROM templatemaster ORDER BY templatename")
-    return [row[0] for row in rows]
+    return [row['templatename'] for row in rows]
+
 
 class FieldWidget(QLabel):
+    """
+    A label representing a field on the canvas. Stores its own QFont (saved_font)
+    and applies an explicit widget stylesheet containing the font-family and font-size.
+    A widget-level stylesheet will not be overridden by parent/app styles for font properties.
+    """
     def __init__(self, field_name, x_mm, y_mm, w_mm, h_mm, font: QFont, parent=None):
         super().__init__(field_name, parent)
         self.field_name = field_name
-        self.setFont(font)
-        self.setStyleSheet("background-color: #f9f9f9; border: 1px solid #222;")
+
+        # store the intended font and apply it
+        self.saved_font = QFont(font)
+        self.setFont(self.saved_font)
+
+        # geometry in px
         self.setGeometry(mm_to_px(x_mm), mm_to_px(y_mm), mm_to_px(w_mm), mm_to_px(h_mm))
         self.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.setAttribute(Qt.WA_DeleteOnClose)
+
+        # frame & visual defaults
         self.setFrameShape(QFrame.Panel)
         self.setFrameShadow(QFrame.Raised)
         self.setScaledContents(True)
         self.setMouseTracking(True)
         self._drag_pos = None
+
+        # Ensure the widget has its own stylesheet so parent/app styles don't override fonts.
+        # We'll include background & border plus explicit font-family and font-size.
+        self._apply_font_stylesheet()
+
+        # context menu
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
+
+    def _apply_font_stylesheet(self):
+        family = self.saved_font.family()
+        size_pt = safe_point_size(self.saved_font)
+        # keep color and border consistent, but explicitly set font properties at widget level
+        style = (
+            "background-color: #f9f9f9;"
+            "border: 1px solid #222;"
+            f" font-family: '{family}';"
+            f" font-size: {int(size_pt)}pt;"
+        )
+        # Make sure the widget uses styled background so stylesheet backgrounds are painted
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        # Apply stylesheet (overrides parent/app QLabel rules for font-family/size)
+        self.setStyleSheet(style)
+
+    def update_saved_font(self, qfont: QFont):
+        """Update saved font and re-apply stylesheet and widget font."""
+        self.saved_font = QFont(qfont)
+        self.setFont(self.saved_font)
+        self._apply_font_stylesheet()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -56,8 +113,23 @@ class FieldWidget(QLabel):
         if self._drag_pos and event.buttons() == Qt.LeftButton:
             parent = self.parentWidget()
             if parent:
+                # Calculate new position relative to the parent widget (the canvas)
                 new_pos = event.globalPos() - self._drag_pos - parent.mapToGlobal(QPoint(0, 0))
-                self.move(new_pos)
+                
+                # Clamp the position to stay within the canvas boundaries
+                new_x = max(0, min(new_pos.x(), parent.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent.height() - self.height()))
+                
+                self.move(new_x, new_y)
+
+                # Ask main window to update spinboxes if applicable
+                main_w = self.window()
+                try:
+                    if isinstance(main_w, TicketEntryDesignerWindow) and main_w.active_field_widget is self:
+                        main_w.update_spinboxes_from_widget(self)
+                except Exception:
+                    pass
+
             event.accept()
         super().mouseMoveEvent(event)
 
@@ -84,11 +156,20 @@ class FieldWidget(QLabel):
             px_to_mm(rect.height())
         )
 
+
 class CanvasWidget(QFrame):
+    """
+    Canvas widget that holds FieldWidget children. We assign a canvas-level stylesheet
+    that does not include QLabel font rules; field widgets have per-widget styles.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.fields = []
         self.bg_image = None
+        # ensure canvas background is styled on its own (prevents inheritance issues)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        # minimal canvas stylesheet — no font declarations here
+        self.setStyleSheet("background-color: white; border: 1px solid #bbb;")
 
     def add_field(self, field_widget):
         field_widget.setParent(self)
@@ -104,7 +185,7 @@ class CanvasWidget(QFrame):
                 parent.active_field_widget = None
 
     def clear_fields(self):
-        for f in self.fields:
+        for f in list(self.fields):
             f.close()
         self.fields.clear()
 
@@ -122,10 +203,15 @@ class CanvasWidget(QFrame):
             y = (self.height() - scaled.height()) // 2
             painter.drawPixmap(x, y, scaled)
 
+
 class TicketEntryDesignerWindow(QDialog):
+    """
+    Designer window that uses CanvasWidget and FieldWidget which resist global stylesheet
+    font overrides by using per-widget styles and storing a saved_font used when saving.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Ticket Entry Designer")
+        self.setWindowTitle("Ticket Print Designer")
         self.setMinimumSize(1200, 900)
         self.ticket_fields = get_ticket_columns()
         self.active_field_widget = None
@@ -184,7 +270,8 @@ class TicketEntryDesignerWindow(QDialog):
         self.left_spin.setSuffix(" mm")
         self.font_btn = QPushButton("Font")
         self.font_btn.clicked.connect(self.pick_font)
-        self.field_font = QFont("Tahoma", 10)
+        # default logical font used when inserting new fields (kept separate from styles)
+        self.field_font = QFont("Tahoma", 14)
 
         field_spec_layout.addWidget(QLabel("Height:"), 0, 0)
         field_spec_layout.addWidget(self.height_spin, 0, 1)
@@ -325,14 +412,24 @@ class TicketEntryDesignerWindow(QDialog):
 
         # Load the default template on startup
         self.load_default_template()
-        # Load the default template on startup
-        self.load_default_template()
 
     def return_to_administration(self):
-        self.hide()
+        self.close()
         parent = self.parent()
         if parent:
             parent.show()
+        else:
+            app = QApplication.instance()
+            if app:
+                app.quit()
+
+    def closeEvent(self, event):
+        parent = self.parent()
+        if parent is None:
+            app = QApplication.instance()
+            if app:
+                app.quit()
+        event.accept()
 
     def get_template_name(self):
         return self.template_name_edit.text().strip()
@@ -352,15 +449,21 @@ class TicketEntryDesignerWindow(QDialog):
 
     def set_active_field(self, event, field_widget):
         self.active_field_widget = field_widget
+        self.update_spinboxes_from_widget(field_widget)
+
+    def update_spinboxes_from_widget(self, field_widget):
+        """Updates the spinboxes based on a field widget's geometry."""
         self.height_spin.blockSignals(True)
         self.width_spin.blockSignals(True)
         self.top_spin.blockSignals(True)
         self.left_spin.blockSignals(True)
+        
         x_mm, y_mm, w_mm, h_mm = field_widget.get_mm_geometry()
         self.height_spin.setValue(h_mm)
         self.width_spin.setValue(w_mm)
         self.top_spin.setValue(y_mm)
         self.left_spin.setValue(x_mm)
+        
         self.height_spin.blockSignals(False)
         self.width_spin.blockSignals(False)
         self.top_spin.blockSignals(False)
@@ -375,7 +478,9 @@ class TicketEntryDesignerWindow(QDialog):
                 mm_to_px(self.width_spin.value()),
                 mm_to_px(self.height_spin.value())
             )
+            # keep saved_font in sync when modifying via UI
             fw.setFont(self.field_font)
+            fw.update_saved_font(self.field_font)
         else:
             self.active_field_widget = None
 
@@ -384,6 +489,8 @@ class TicketEntryDesignerWindow(QDialog):
         if ok:
             self.field_font = font
             self.update_active_field()
+            if self.active_field_widget:
+                self.active_field_widget.update_saved_font(font)
 
     def update_canvas_size(self):
         self.canvas.setFixedSize(
@@ -406,9 +513,7 @@ class TicketEntryDesignerWindow(QDialog):
                 QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
-        # Delete from fields first due to foreign key constraint
         execute_query("DELETE FROM templatefields WHERE templatename=%s", (template_name,))
-        # Then delete from master table
         execute_query("DELETE FROM templatemaster WHERE templatename=%s", (template_name,))
         self.canvas.clear_fields()
         self.status_label.setText(f"Template '{template_name}' deleted.")
@@ -430,7 +535,6 @@ class TicketEntryDesignerWindow(QDialog):
         is_default = self.set_default_checkbox.isChecked()
 
         if is_default:
-            # Reset all to not default
             execute_query("UPDATE templatemaster SET defaulttemplate=FALSE")
 
         template_sql = """
@@ -447,10 +551,16 @@ class TicketEntryDesignerWindow(QDialog):
             is_default
         ))
 
+        # Delete previous field rows for this template
         execute_query("DELETE FROM templatefields WHERE templatename=%s", (template_name,))
 
+        # Insert current canvas fields using saved_font (robustly get point size)
         for f in self.canvas.fields:
-            fs = f.font()
+            fs = getattr(f, "saved_font", None)
+            if fs is None:
+                fs = f.font()
+
+            fontsize = safe_point_size(fs)
             x_mm, y_mm, w_mm, h_mm = f.get_mm_geometry()
             field_sql = """
                 INSERT INTO templatefields
@@ -460,7 +570,7 @@ class TicketEntryDesignerWindow(QDialog):
             execute_query(field_sql, (
                 template_name, f.field_name, f.text(),
                 x_mm, y_mm, w_mm, h_mm,
-                fs.family(), fs.pointSize()
+                fs.family(), int(fontsize)
             ))
         self.status_label.setText("Template Saved")
 
@@ -516,13 +626,11 @@ class TicketEntryDesignerWindow(QDialog):
             self.template_name_edit.setText(name)
             self.load_template()
 
-    # Alignment button operations
+    # Alignment functions
     def align_left(self):
         if self.active_field_widget and self.active_field_widget.parent() is self.canvas:
             rect = self.active_field_widget.geometry()
-            self.active_field_widget.setGeometry(
-                0, rect.y(), rect.width(), rect.height()
-            )
+            self.active_field_widget.setGeometry(0, rect.y(), rect.width(), rect.height())
             self.left_spin.setValue(px_to_mm(0))
 
     def align_center(self):
@@ -531,9 +639,7 @@ class TicketEntryDesignerWindow(QDialog):
             canvas_width = self.canvas.width()
             field_width = field.width()
             center_x = (canvas_width - field_width) // 2
-            field.setGeometry(
-                center_x, field.y(), field.width(), field.height()
-            )
+            field.setGeometry(center_x, field.y(), field.width(), field.height())
             self.left_spin.setValue(px_to_mm(center_x))
 
     def align_right(self):
@@ -542,9 +648,7 @@ class TicketEntryDesignerWindow(QDialog):
             canvas_width = self.canvas.width()
             field_width = field.width()
             right_x = canvas_width - field_width
-            field.setGeometry(
-                right_x, field.y(), field.width(), field.height()
-            )
+            field.setGeometry(right_x, field.y(), field.width(), field.height())
             self.left_spin.setValue(px_to_mm(right_x))
 
     # Keyboard shortcuts for moving field by 10mm
@@ -577,22 +681,20 @@ class TicketEntryDesignerWindow(QDialog):
         return super().eventFilter(obj, event)
 
     def preview_print(self):
-        """
-        Gathers current template fields from the design area and shows a print preview
-        using sample data.
-        """
         sample_data = {f.field_name: f.field_name for f in self.canvas.fields}
         template_fields = []
         for f in self.canvas.fields:
             x, y, w, h = f.get_mm_geometry()
+            # Use saved_font for preview metadata where possible
+            fs = getattr(f, "saved_font", f.font())
             template_fields.append({
                 'x': x,
                 'y': y,
                 'width': w,
                 'height': h,
                 'fieldname': f.field_name,
-                'fontname': f.font().family(),
-                'fontsize': f.font().pointSize()
+                'fontname': fs.family(),
+                'fontsize': safe_point_size(fs)
             })
         ticket_width_mm = self.ticket_width_spin.value()
         ticket_height_mm = self.ticket_height_spin.value()
@@ -606,9 +708,6 @@ class TicketEntryDesignerWindow(QDialog):
         )
 
     def new_template(self):
-        """
-        Clears the canvas and resets inputs to start a new template.
-        """
         self.canvas.clear_fields()
         self.template_name_edit.clear()
         self.ticket_height_spin.setValue(100.0)
@@ -616,6 +715,7 @@ class TicketEntryDesignerWindow(QDialog):
         self.status_label.setText("Ready for new template.")
         self.active_field_widget = None
         self.set_default_checkbox.setChecked(False)
+
 
 if __name__ == "__main__":
     import sys

@@ -10,18 +10,18 @@ from supplier_master import SupplierMaster
 from shift_master import ShiftMaster
 from vehicle_master import VehicleMaster
 from comm_port_settings import CommPortSettings
-# --- MODIFICATION: Import the new CameraPortSettings window ---
 from camera_port import CameraPortSettings
 from report_designer import ReportDesigner
 from delete_entities import DeleteEntities
 from duplicate_ticket import DuplicateTicket
+from document_importer_window import DocumentImporterWindow
 
 class ConfigurationWindow(QDialog):
     def __init__(self, parent=None, permissions=None):
         super().__init__(parent)
-        self.permissions = permissions
+        self.permissions = permissions or {} # Ensure permissions is a dict
         self.setWindowTitle("Configuration")
-        self.setMinimumSize(400, 450) # Increased height for new button
+        self.setMinimumSize(400, 500)
 
         # --- STYLES ---
         self.primary_color = "#3498db"
@@ -29,6 +29,7 @@ class ConfigurationWindow(QDialog):
         self.bg_color = "#ecf0f1"
         self.text_color = "#2c3e50"
         self.light_border_color = "#bdc3c7"
+        
         self.setStyleSheet(f"""
             QDialog {{ background-color: {self.bg_color}; }}
             QLabel {{ color: {self.text_color}; font-family: Arial; }}
@@ -42,6 +43,7 @@ class ConfigurationWindow(QDialog):
             QPushButton:disabled {{ background-color: #95a5a6; color: #bdc3c7; }}
             QFrame {{ border: 1px solid {self.light_border_color}; border-radius: 8px; }}
         """)
+
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
@@ -63,14 +65,13 @@ class ConfigurationWindow(QDialog):
             "Shift Master": (QPushButton("Shift Master"), self.open_shift_master),
             "Vehicle Master": (QPushButton("Vehicle Master"), self.open_vehicle_master),
             "Comm Port Setting": (QPushButton("Comm Port Setting"), self.open_comm_port_settings),
-            # --- MODIFICATION: Added Camera Port button and its function ---
             "Camera Port Settings": (QPushButton("Camera Port Settings"), self.open_camera_port_settings),
+            "Document Importer": (QPushButton("Document Importer"), self.open_document_importer),
             "Report Designer": (QPushButton("Report Designer"), self.open_report_designer),
             "Delete Entities": (QPushButton("Delete Entities"), self.open_delete_entities),
             "Duplicate Ticket": (QPushButton("Duplicate Ticket"), self.open_duplicate_ticket)
         }
 
-        # Dynamically place buttons in the grid
         sorted_buttons = sorted(self.buttons.keys())
         for idx, text in enumerate(sorted_buttons):
             button, slot = self.buttons[text]
@@ -90,27 +91,16 @@ class ConfigurationWindow(QDialog):
         self._apply_permissions()
 
     def _apply_permissions(self):
-        if not self.permissions:
-            for button, _ in self.buttons.values():
-                button.setEnabled(False)
-            return
+        # --- FIX: Use the new 'is_admin' key for checking permissions ---
+        is_admin = self.permissions.get('is_admin', False)
 
-        is_admin = self.permissions.get('adminuser', False) or self.permissions.get('primaryuser', False)
-        self.buttons["Material Master"][0].setEnabled(is_admin)
-        self.buttons["Supplier Master"][0].setEnabled(is_admin)
-        self.buttons["Shift Master"][0].setEnabled(is_admin)
-        self.buttons["Comm Port Setting"][0].setEnabled(is_admin)
-        # --- MODIFICATION: Set permissions for the new button ---
-        self.buttons["Camera Port Settings"][0].setEnabled(is_admin)
-        self.buttons["Report Designer"][0].setEnabled(is_admin)
-        
-        self.buttons["Vehicle Master"][0].setEnabled(self.permissions.get('vehiclemaster', False) or is_admin)
-        self.buttons["Delete Entities"][0].setEnabled(self.permissions.get('deleterecords', False) or is_admin)
-        self.buttons["Duplicate Ticket"][0].setEnabled(self.permissions.get('duplicateticket', False) or is_admin)
+        # Since only admins can open this window, all buttons should be enabled for them.
+        # This simplifies the logic significantly.
+        for button, _ in self.buttons.values():
+            button.setEnabled(is_admin)
 
     def _open_child_window(self, window_class):
         self.hide()
-        # Pass self and permissions to the child window
         self.child_window = window_class(parent=self)
         self.child_window.show()
 
@@ -122,10 +112,8 @@ class ConfigurationWindow(QDialog):
     def open_report_designer(self): self._open_child_window(ReportDesigner)
     def open_delete_entities(self): self._open_child_window(DeleteEntities)
     def open_duplicate_ticket(self): self._open_child_window(DuplicateTicket)
-    
-    # --- MODIFICATION: Added function to open the camera settings window ---
-    def open_camera_port_settings(self):
-        self._open_child_window(CameraPortSettings)
+    def open_camera_port_settings(self): self._open_child_window(CameraPortSettings)
+    def open_document_importer(self): self._open_child_window(DocumentImporterWindow)
 
     def closeEvent(self, event):
         parent = self.parent()

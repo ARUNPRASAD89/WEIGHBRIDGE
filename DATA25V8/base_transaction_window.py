@@ -6,9 +6,10 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QSpacerItem, QDialog, QMessageBox
 )
 from PyQt5.QtGui import QFont, QPalette, QColor
-from PyQt5.QtCore import Qt, QDateTime, QDate, QTime, QLocale
+from PyQt5.QtCore import Qt, QDateTime, QDate, QTime, QLocale, pyqtSlot
 from db_utils import execute_query, fetch_one, fetch_all
-from date_time_utils import to_db_date, to_db_time
+from date_time_utils import to_db_date, to_db_time, to_display_date, to_display_time  # FIX: import display helpers
+from serial_manager import SerialManager
 
 def blank_to_none(val):
     if val in ("", None):
@@ -232,6 +233,7 @@ class BaseTransactionWindow(QDialog):
         label_width = 150  # Consistent label width
         field_width = 200  # Consistent field width
 
+        # ... inside BaseTransactionWindow.__init__() where mandatory fields are built
         for f in get_tablemaster_fields():
             fieldcaption = f["fieldcaption"]
             fieldname = f["fieldname"]
@@ -240,26 +242,29 @@ class BaseTransactionWindow(QDialog):
             mandatory = f["mandatory"]
             tablename = f["tablename"]
             # Skip removed fields: date, time, suppliername (one)
-            if fieldname.lower() in [
-                "date", "time", "suppliername"
-            ]:
+            if fieldname.lower() in ["date", "time", "suppliername"]:
                 continue
 
             if mandatory:
                 label = QLabel(fieldcaption)
-                label.setFixedWidth(label_width)  # Consistent label width
+                label.setFixedWidth(label_width)
                 label.setFont(QFont("Arial", 10))
 
                 if fieldname == "Materialname":
                     widget = QComboBox()
                     widget.setEditable(False)
                     widget.setFixedWidth(field_width)
+                    # ADD a blank placeholder so nothing is selected by default
+                    widget.addItem("")  # <-- placeholder
                     widget.addItems(get_combo_values("material", "materialname"))
+                    widget.setCurrentIndex(0)  # ensure blank is selected
                     widget.currentTextChanged.connect(self.on_material_changed)
                 elif fieldtype.lower() == "combo":
                     widget = QComboBox()
                     widget.setEditable(False)
                     widget.setFixedWidth(field_width)
+                    # Optional: you can also add a blank here if you want combos unselected by default
+                    # widget.addItem("")
                     widget.addItems(get_combo_values(tablename, fieldname))
                 else:
                     widget = QLineEdit()
@@ -355,7 +360,8 @@ class BaseTransactionWindow(QDialog):
         self.btn_single.clicked.connect(self.open_single_transaction)
         self.btn_first.clicked.connect(self.open_first_transaction)
         self.btn_second.clicked.connect(self.open_second_transaction)
-        self.btn_save.clicked.connect(self.save_ticket)
+        # IMPORTANT: Do NOT connect Save here; subclasses handle Save click to avoid double execution
+        # self.btn_save.clicked.connect(self.save_ticket)
         self.btn_exit.clicked.connect(self.return_to_main_menu)
 
         # Show initial current datetime in blue
@@ -363,6 +369,27 @@ class BaseTransactionWindow(QDialog):
 
         # PATCH: Enable live formula calculation for custom fields
         self.setup_formula_autocalc()
+
+        # --- SERIAL PORT INTEGRATION ---
+        self.serial_manager = SerialManager(self)
+        self.serial_manager.weight_updated.connect(self.update_live_weight)
+        self.serial_manager.error_occurred.connect(self.show_serial_error)
+        self.serial_manager.start()
+
+    @pyqtSlot(str)
+    def update_live_weight(self, weight):
+        """Updates the weight display label with data from the serial port."""
+        self.weight_display.setText(weight)
+
+    @pyqtSlot(str)
+    def show_serial_error(self, message):
+        """Shows a non-blocking message box for serial port errors."""
+        QMessageBox.warning(self, "Serial Port Error", message)
+
+    def closeEvent(self, event):
+        """Ensure the serial manager thread is stopped cleanly on window close."""
+        self.serial_manager.stop()
+        super().closeEvent(event)
 
     def update_datetime_label(self):
         now = QDateTime.currentDateTime()
@@ -376,7 +403,6 @@ class BaseTransactionWindow(QDialog):
 
     def display_ticket_date_time(self, db_date, db_time, date_widget=None, time_widget=None):
         """Show DB date/time in localized display format in the UI/print/search."""
-        
         if date_widget is not None:
             date_widget.setText(to_display_date(db_date))
         if time_widget is not None:
@@ -414,6 +440,7 @@ class BaseTransactionWindow(QDialog):
 
     def on_material_changed(self, materialname):
         pass
+
     def detect_weighbridge_event(self, params):
         """
         Returns: 'empty', 'load', or 'both'
@@ -430,7 +457,6 @@ class BaseTransactionWindow(QDialog):
 
     def convert_db_date_time_for_display(self, db_date, db_time):
         """Convert DB ISO date/time to localized display format for UI/print/search."""
-        from date_time_utils import to_display_date, to_display_time
         ui_date = to_display_date(db_date)
         ui_time = to_display_time(db_time)
         return ui_date, ui_time
@@ -590,6 +616,51 @@ class BaseTransactionWindow(QDialog):
         execute_query(query, filtered_params)
         print("[BaseTransactionWindow.save_ticket] Finished")
 
+    # Utility: clear fields
+    def clear_non_essential_fields(self, essentials=("TicketNumber", "LoadStatus")):
+        """
+        Clears all text fields except the ones listed in 'essentials'.
+        For QComboBox, resets to index 0 unless the field is essential.
+        """
+        # Mandatory widgets
+        for name, widget in self.mandatory_widgets.items():
+            if widget is None:
+                continue
+            if name in essentials:
+                # Reset essentials to a safe default without clearing their existence
+                if isinstance(widget, QLineEdit):
+                    widget.clear()
+                elif isinstance(widget, QComboBox):
+                    try:
+                        widget.setCurrentIndex(0)
+                    except Exception:
+                        pass
+                continue
+            if isinstance(widget, QLineEdit):
+                widget.clear()
+            elif isinstance(widget, QComboBox):
+                try:
+                    widget.setCurrentIndex(0)
+                except Exception:
+                    pass
+        # Custom widgets
+        for name, widget in self.custom_widgets.items():
+            if widget is None:
+                continue
+            if isinstance(widget, QLineEdit):
+                widget.clear()
+            elif isinstance(widget, QComboBox):
+                try:
+                    widget.setCurrentIndex(0)
+                except Exception:
+                    pass
+        # Reset weight display
+        try:
+            self.weight_display.setText("0")
+        except Exception:
+            pass
+
+    # RE-ADDED: navigation helpers so signal connections work
     def open_single_transaction(self):
         from single_transaction_window import SingleTransactionWindow
         self.next_window = SingleTransactionWindow(parent=self)

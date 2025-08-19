@@ -39,8 +39,25 @@ class SecondTransactionWindow(BaseTransactionWindow):
             self.empty_weight.setReadOnly(True)
         if self.net_weight:
             self.net_weight.setReadOnly(True)
-        self.btn_exit.clicked.disconnect()    
+
+        # Ensure single connections for Exit, Save, Weigh
+        try:
+            self.btn_exit.clicked.disconnect()
+        except Exception:
+            pass
         self.btn_exit.clicked.connect(self.return_to_base_transaction_window)
+
+        try:
+            self.btn_save.clicked.disconnect()
+        except Exception:
+            pass
+        self.btn_save.clicked.connect(self.save_ticket)
+
+        try:
+            self.btn_weigh.clicked.disconnect()
+        except Exception:
+            pass
+        self.btn_weigh.clicked.connect(self.handle_weigh_second)
 
         # Storage for true weigh event times
         self._empty_weight_date = ""
@@ -48,10 +65,19 @@ class SecondTransactionWindow(BaseTransactionWindow):
         self._load_weight_date = ""
         self._load_weight_time = ""
 
+        # Print flow guards
+        self._print_prompt_open = False
+        self._printing_in_progress = False
+        self._suppress_print_prompt = False  # NEW: suppress printing after Close Transaction
+
         # Add Search button if not already present
         if not hasattr(self, "btn_search"):
             self.btn_search = QPushButton("Search")
             self.mand_grid.addWidget(self.btn_search, 12, 1)
+        try:
+            self.btn_search.clicked.disconnect()
+        except Exception:
+            pass
         self.btn_search.clicked.connect(self.search_action)
 
         # Combo for selecting pending ticket numbers
@@ -94,13 +120,9 @@ class SecondTransactionWindow(BaseTransactionWindow):
         self.date_str = self.now.date().toString("yyyy-MM-dd")
         self.time_str = self.now.time().toString("HH:mm:ss")
 
-        self.btn_save.clicked.connect(self.save_ticket)
-
         self.load_pending_tickets()
 
         # Weigh button & logic
-        self.btn_weigh.clicked.connect(self.handle_weigh_second)
-
         self.active_weight_type = None
         self.btn_load.clicked.connect(lambda: self.set_active_weight_type("LOAD"))
         self.btn_empty.clicked.connect(lambda: self.set_active_weight_type("EMPTY"))
@@ -226,8 +248,10 @@ class SecondTransactionWindow(BaseTransactionWindow):
         now = QDateTime.currentDateTime()
         logic_date = now.date().toString("dd/MM/yyyy")
         logic_time = now.time().toString("HH:mm")
-        value = random.randint(5000, 50000)
-        self.weight_display.setText(str(value))
+        try:
+            value = int(float(self.weight_display.text()))
+        except (ValueError, TypeError):
+            value = 0
         # Only update the field matching the active weight type
         if self.active_weight_type == "LOAD":
             if self.loaded_weight:
@@ -346,6 +370,8 @@ class SecondTransactionWindow(BaseTransactionWindow):
             'UPDATE tickets SET "Pending" = FALSE, "Closed" = %s WHERE "TicketNumber" = %s',
             (db_closed, ticket_number)
         )
+        # Suppress print prompt after closing transaction
+        self._suppress_print_prompt = True
         self.save_ticket()
 
     def show_success_message(self, ticket_number, ticket_data):
@@ -354,32 +380,69 @@ class SecondTransactionWindow(BaseTransactionWindow):
         msg.setWindowTitle("Success")
         msg.setText(f"Ticket number {ticket_number} successfully saved")
         msg.setStandardButtons(QMessageBox.Ok)
-        msg.buttonClicked.connect(lambda _: self.ask_print_prompt(ticket_data))
-        msg.exec_()
+        ret = msg.exec_()
+        if ret == QMessageBox.Ok:
+            if self._suppress_print_prompt:
+                # Reset flag and return to base without asking for print
+                self._suppress_print_prompt = False
+                self.return_to_base_transaction_window()
+            else:
+                self.ask_print_prompt(ticket_data)
 
     def ask_print_prompt(self, ticket_data):
-        dlg = PrintPromptDialog(ticket_data, parent=self)
-        result = dlg.exec_()
-        if result == QDialog.Accepted:
-            print_ticket_with_template(ticket_data)
-            self.return_to_base_transaction_window()
-        else:
-            self.return_to_base_transaction_window()
+        if self._print_prompt_open:
+            return
+        self._print_prompt_open = True
+        try:
+            dlg = PrintPromptDialog(ticket_data, parent=self)
+            result = dlg.exec_()
+            if result == QDialog.Accepted:
+                if not self._printing_in_progress:
+                    self._printing_in_progress = True
+                    try:
+                        print_ticket_with_template(ticket_data)
+                    finally:
+                        self._printing_in_progress = False
+                self.return_to_base_transaction_window()
+            else:
+                self.return_to_base_transaction_window()
+        finally:
+            self._print_prompt_open = False
 
+    # Search for non-pending (Pending = FALSE) tickets and show print option
     def search_action(self):
-        tickets = fetch_all('SELECT * FROM tickets WHERE "State" = %s', ("second transaction",))
+        tickets = fetch_all(
+            '''
+            SELECT *
+            FROM tickets
+            WHERE "Pending" = FALSE
+            ORDER BY "TicketNumber" DESC
+            ''',
+            ()
+        )
         dlg = QDialog(self)
-        dlg.setWindowTitle("Second Transaction Search")
+        dlg.setWindowTitle("Closed/Completed Tickets (Pending = FALSE)")
         layout = QVBoxLayout(dlg)
-        table = QTableWidget(len(tickets), 4)
-        table.setHorizontalHeaderLabels(["TicketNumber", "VehicleNumber", "Date", "Time"])
+
+        headers = ["TicketNumber", "VehicleNumber", "Date", "Time", "EmptyWeight", "LoadedWeight"]
+        table = QTableWidget(len(tickets), len(headers))
+        table.setHorizontalHeaderLabels(headers)
+
         for i, t in enumerate(tickets):
-            table.setItem(i, 0, QTableWidgetItem(str(t["TicketNumber"])))
-            table.setItem(i, 1, QTableWidgetItem(str(t["VehicleNumber"])))
-            table.setItem(i, 2, QTableWidgetItem(to_display_date(t.get("Date", ""))))
-            table.setItem(i, 3, QTableWidgetItem(to_display_time(t.get("Time", ""))))
+            row_vals = {
+                "TicketNumber": str(t.get("TicketNumber", "")),
+                "VehicleNumber": str(t.get("VehicleNumber", "")),
+                "Date": to_display_date(t.get("Date", "")),
+                "Time": to_display_time(t.get("Time", "")),
+                "EmptyWeight": "" if t.get("EmptyWeight") in (None, "", "None") else str(t.get("EmptyWeight")),
+                "LoadedWeight": "" if t.get("LoadedWeight") in (None, "", "None") else str(t.get("LoadedWeight")),
+            }
+            for j, key in enumerate(headers):
+                table.setItem(i, j, QTableWidgetItem(row_vals[key]))
+
         def on_cell_clicked(row, col):
             self.display_ticket_fields(tickets[row], dlg)
+
         table.cellClicked.connect(on_cell_clicked)
         layout.addWidget(table)
         dlg.setLayout(layout)
@@ -389,22 +452,41 @@ class SecondTransactionWindow(BaseTransactionWindow):
         field_dlg = QDialog(parent_dialog)
         field_dlg.setWindowTitle(f"Ticket {ticket['TicketNumber']} Details")
         layout = QVBoxLayout(field_dlg)
-        for k, v in ticket.items():
+
+        fields_to_show = ["TicketNumber", "VehicleNumber", "Date", "Time"]
+        for k in fields_to_show:
             row = QHBoxLayout()
             row.addWidget(QLabel(f"{k}:"))
             if k.lower() == "date":
-                display_val = to_display_date(v)
+                display_val = to_display_date(ticket.get(k, ""))
             elif k.lower() == "time":
-                display_val = to_display_time(v)
+                display_val = to_display_time(ticket.get(k, ""))
             else:
-                display_val = str(v)
+                display_val = str(ticket.get(k, ""))
             field = QLineEdit(display_val)
             field.setReadOnly(True)
             row.addWidget(field)
             layout.addLayout(row)
+
+        if ticket.get("EmptyWeight") not in (None, "", "None"):
+            row = QHBoxLayout()
+            row.addWidget(QLabel("EmptyWeight:"))
+            field = QLineEdit(str(ticket.get("EmptyWeight")))
+            field.setReadOnly(True)
+            row.addWidget(field)
+            layout.addLayout(row)
+        if ticket.get("LoadedWeight") not in (None, "", "None"):
+            row = QHBoxLayout()
+            row.addWidget(QLabel("LoadedWeight:"))
+            field = QLineEdit(str(ticket.get("LoadedWeight")))
+            field.setReadOnly(True)
+            row.addWidget(field)
+            layout.addLayout(row)
+
         btn_print = QPushButton("Print")
         btn_print.clicked.connect(lambda: self.print_selected_ticket(ticket))
         layout.addWidget(btn_print)
+
         field_dlg.setLayout(layout)
         field_dlg.exec_()
 
