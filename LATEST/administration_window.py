@@ -72,6 +72,7 @@ class AdministrationWindow(QDialog):
             ("backup.png", "Database\nBackup", self.open_backup_window),
             ("whatsapp.png", "WhatsApp\nManager", self.open_whatsapp_manager),
             ("whatsapp_designer.png", "WhatsApp Template\nDesigner", self.open_whatsapp_template_designer),
+            ("email.png", "Email\nManager", self.open_email_manager),
             ("exit.png", "Exit", self.close),
         ]
 
@@ -93,63 +94,81 @@ class AdministrationWindow(QDialog):
         main_layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
     def _open_child_window(self, window_class):
+        """Generic method to open child windows"""
         self.hide()
         self.child_window = window_class(parent=self)
         self.child_window.show()
 
+    # ===== ALL WINDOW OPENERS USING LAZY IMPORTS =====
+    
+    def open_ticket_data_entry_designer(self):
+        self._open_child_window(TicketDataEntryDesignerWindow)
+    
+    def open_ticket_entry_designer(self):
+        self._open_child_window(TicketEntryDesignerWindow)
+    
+    def open_database_designer(self):
+        self._open_child_window(DatabaseDesigner)
+    
+    def open_formula_editor(self):
+        self._open_child_window(FormulaEditor)
+    
+    def open_user_manager(self):
+        self._open_child_window(UserManager)
+    
+    def open_company_details(self):
+        self._open_child_window(CompanyDetails)
+    
+    def open_rate_chart_manager(self):
+        self._open_child_window(RateChartManagerWindow)
+    
+    def open_backup_window(self):
+        self._open_child_window(BackupWindow)
+    
+    def open_whatsapp_template_designer(self):
+        self._open_child_window(WhatsAppTemplateDesignerWindow)
+
     def open_whatsapp_manager(self):
         """
-        --- CORRECTED AND ROBUST SOLUTION ---
-        Launches the WhatsApp GUI as a separate process.
-        This works for both development and the final installed application.
+        Launch WhatsApp Manager as separate process
         """
         try:
-            # This check correctly determines if the app is running from a PyInstaller bundle.
             if getattr(sys, 'frozen', False):
-                # --- This block runs on the target PC after installation ---
-
-                # 1. Get the directory of the CURRENTLY running executable (WeighbridgeApp.exe).
-                #    Based on our installer, this will be 'C:\Program Files (x86)\WeighbridgeSuite\Kiosk'
+                # PyInstaller bundle
                 current_app_dir = os.path.dirname(sys.executable)
-                
-                # 2. Navigate to the correct folder where WhatsAppManager.exe was installed.
-                #    Our installer puts it in 'C:\Program Files (x86)\WeighbridgeSuite\AdminTools'
                 whatsapp_executable = os.path.join(current_app_dir, '..', 'AdminTools', 'WhatsAppManager.exe')
-                
-                # 3. Normalize the path to handle the '..' correctly (e.g., C:\A\B\..\C -> C:\A\C)
                 whatsapp_executable = os.path.normpath(whatsapp_executable)
 
                 if not os.path.exists(whatsapp_executable):
-                    raise FileNotFoundError(f"The WhatsApp executable was not found at the expected location: {whatsapp_executable}")
+                    raise FileNotFoundError(f"WhatsApp executable not found: {whatsapp_executable}")
 
-                # 4. Launch the executable.
                 subprocess.Popen([whatsapp_executable])
-
             else:
-                # --- This block runs in your development environment (e.g., python main.py) ---
+                # Development environment
                 python_executable = sys.executable
-                # Corrected to point to the actual script name
                 script_path = "whatsapp_gui.py"
                 if not os.path.exists(script_path):
-                     raise FileNotFoundError(f"The script '{script_path}' was not found in the project directory.")
+                    raise FileNotFoundError(f"Script '{script_path}' not found")
                 
                 subprocess.Popen([python_executable, script_path])
-            
+        
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to launch WhatsApp Manager:\n\n{e}")
 
-
-    def open_ticket_data_entry_designer(self): self._open_child_window(TicketDataEntryDesignerWindow)
-    def open_ticket_entry_designer(self): self._open_child_window(TicketEntryDesignerWindow)
-    def open_database_designer(self): self._open_child_window(DatabaseDesigner)
-    def open_formula_editor(self): self._open_child_window(FormulaEditor)
-    def open_user_manager(self): self._open_child_window(UserManager)
-    def open_company_details(self): self._open_child_window(CompanyDetails)
-    def open_rate_chart_manager(self): self._open_child_window(RateChartManagerWindow)
-    def open_backup_window(self): self._open_child_window(BackupWindow)
-    def open_whatsapp_template_designer(self): self._open_child_window(WhatsAppTemplateDesignerWindow)
+    def open_email_manager(self):
+        """
+        Open Email Manager Window - LAZY IMPORT (No circular imports!)
+        """
+        try:
+            from email_manager_window import EmailManagerWindow
+            self._open_child_window(EmailManagerWindow)
+        except ImportError as e:
+            QMessageBox.critical(self, "Error", f"EmailManagerWindow import failed:\n\n{e}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open Email Manager:\n\n{e}")
 
     def close(self):
         parent = self.parent()
-        if parent: parent.show()
+        if parent: 
+            parent.show()
         super().close()
