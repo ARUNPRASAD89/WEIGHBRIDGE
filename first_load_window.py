@@ -2,10 +2,11 @@ import re
 import sys
 import random
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QGridLayout, QButtonGroup, QApplication, QSizePolicy
+    QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QGridLayout, QButtonGroup, QApplication, QSizePolicy, QFrame
 )
 from PyQt5.QtCore import Qt, QDate, QTime, QTimer
 from PyQt5.QtGui import QFont
+from db_utils_simple import fetch_all_suppliers, get_supplier_details
 
 
 WHEEL_RATES = {
@@ -401,6 +402,75 @@ class FirstLoadWindow(QWidget):
         amount_hbox.addStretch()
         main_layout.addLayout(amount_hbox)
 
+        # Supplier Field and Button Panel
+        supplier_hbox = QHBoxLayout()
+        supplier_label = QLabel("Supplier:")
+        supplier_label.setFont(font_label)
+        self.supplier_input = QLineEdit()
+        self.supplier_input.setFont(font_input)
+        self.supplier_input.setReadOnly(True)
+        self.supplier_input.setMaximumWidth(250)
+        self.supplier_input.setMinimumWidth(200)
+        self.supplier_input.setStyleSheet("background: #f0f0f0; border: 1px solid #ccc; padding: 3px;")
+        supplier_hbox.addWidget(supplier_label)
+        supplier_hbox.addWidget(self.supplier_input)
+        supplier_hbox.addStretch()
+        main_layout.addLayout(supplier_hbox)
+
+        # Supplier Button Panel
+        supplier_panel_frame = QFrame()
+        supplier_panel_frame.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
+        supplier_panel_frame.setStyleSheet("QFrame { background: #f9f9f9; border: 1px solid #ddd; }")
+        supplier_panel_layout = QVBoxLayout(supplier_panel_frame)
+        supplier_panel_layout.setContentsMargins(10, 8, 10, 8)
+        
+        supplier_title = QLabel("Quick Supplier Selection:")
+        supplier_title.setFont(QFont("Arial", 10, QFont.Bold))
+        supplier_title.setAlignment(Qt.AlignCenter)
+        supplier_panel_layout.addWidget(supplier_title)
+        
+        # Create supplier buttons grid
+        supplier_grid = QGridLayout()
+        supplier_grid.setHorizontalSpacing(5)
+        supplier_grid.setVerticalSpacing(3)
+        
+        # Load suppliers and create buttons
+        suppliers = fetch_all_suppliers()
+        self.supplier_buttons = []
+        supplier_font = QFont("Arial", 9)
+        
+        for idx, supplier in enumerate(suppliers):
+            btn = QPushButton(supplier["suppliername"])
+            btn.setFont(supplier_font)
+            btn.setFixedHeight(28)
+            btn.setMinimumWidth(120)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #e6f3ff; 
+                    border: 1px solid #4a90e2; 
+                    border-radius: 4px; 
+                    padding: 2px 8px;
+                    text-align: left;
+                }
+                QPushButton:hover {
+                    background: #cce7ff;
+                    border: 2px solid #4a90e2;
+                }
+                QPushButton:pressed {
+                    background: #a6d4ff;
+                }
+            """)
+            btn.clicked.connect(lambda checked, name=supplier["suppliername"]: self.select_supplier(name))
+            self.supplier_buttons.append(btn)
+            
+            # Arrange in 4 columns
+            row = idx // 4
+            col = idx % 4
+            supplier_grid.addWidget(btn, row, col)
+        
+        supplier_panel_layout.addLayout(supplier_grid)
+        main_layout.addWidget(supplier_panel_frame)
+
         main_layout.addSpacing(8)
 
         # Keypad Layout
@@ -582,8 +652,79 @@ class FirstLoadWindow(QWidget):
             self.eamount_input.setText("")
             self.tamount_input.setText(str(rate))
 
+    def select_supplier(self, supplier_name):
+        """Handle supplier selection from button panel"""
+        self.supplier_input.setText(supplier_name)
+        # Visual feedback for selection
+        for btn in self.supplier_buttons:
+            if btn.text() == supplier_name:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: #4a90e2; 
+                        color: white;
+                        border: 2px solid #2c5aa0; 
+                        border-radius: 4px; 
+                        padding: 2px 8px;
+                        text-align: left;
+                        font-weight: bold;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: #e6f3ff; 
+                        border: 1px solid #4a90e2; 
+                        border-radius: 4px; 
+                        padding: 2px 8px;
+                        text-align: left;
+                    }
+                    QPushButton:hover {
+                        background: #cce7ff;
+                        border: 2px solid #4a90e2;
+                    }
+                    QPushButton:pressed {
+                        background: #a6d4ff;
+                    }
+                """)
+
+    def get_selected_supplier(self):
+        """Get the currently selected supplier name"""
+        return self.supplier_input.text().strip()
+
     def weigh_action(self): pass
-    def save_action(self): pass
+    
+    def save_action(self): 
+        """Save ticket data including supplier information"""
+        try:
+            # Collect ticket data
+            ticket_data = {
+                "ticket_number": self.ticket_number.text(),
+                "vehicle_number": self.vehicle_input.text(),
+                "date": self.date_field.text(),
+                "time": self.time_field.text(),
+                "weight": self.weight_display.text(),
+                "wheel_type": getattr(self, 'selected_wheel_label', ''),
+                "load_status": self.load_status_display.text(),
+                "empty_weight": self.empty_weight_field.text(),
+                "load_weight": self.load_weight_field.text(),
+                "eamount": self.eamount_input.text(),
+                "lamount": self.lamount_input.text(),
+                "tamount": self.tamount_input.text(),
+                "supplier_name": self.get_selected_supplier(),  # Include supplier
+            }
+            
+            # Print confirmation with supplier info
+            print(f"Saving ticket data with supplier: {ticket_data['supplier_name']}")
+            print(f"Ticket data: {ticket_data}")
+            
+            # In a real implementation, this would save to database
+            # For now, just show success message
+            return True
+            
+        except Exception as e:
+            print(f"Error saving ticket data: {e}")
+            return False
+    
     def preview_action(self): pass
     def print_action(self): pass
     def export_action(self): pass
