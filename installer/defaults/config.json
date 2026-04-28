@@ -1,0 +1,24 @@
+{
+  "App": {
+    "Mode": "ManualMode",
+    "Language": "en-US"
+  },
+  "Database": {
+    "Provider": "SQLite",
+    "ConnectionString": "Data Source=C:\\ProgramData\\Weighbridge\\data\\weighbridge.db;Cache=Shared;Journal Mode=WAL"
+  },
+  "Hardware": {
+    "Scale": {
+      "Port": "COM3",
+      "BaudRate": 9600,
+      "Parity": "None",
+      "DataBits": 8,
+      "StopBits": 1,
+      "Handshake": "None"
+    }
+  },
+  "Logging": {
+    "Level": "Information",
+    "Directory": "C:\\ProgramData\\Weighbridge\\logs"
+  }
+}
